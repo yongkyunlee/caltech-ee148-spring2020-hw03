@@ -1,5 +1,6 @@
 from __future__ import print_function
 import argparse
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -8,7 +9,13 @@ from torchvision import datasets, transforms
 from torch.optim.lr_scheduler import StepLR
 from torch.utils.data.sampler import SubsetRandomSampler
 
-import os
+from sklearn.model_selection import StratifiedShuffleSplit
+import numpy as np
+
+from data_augmentation import augmentation_scheme
+
+MODEL_PATH = './model'
+os.makedirs(MODEL_PATH, exist_ok=True)
 
 '''
 This code is adapted from two sources:
@@ -83,9 +90,33 @@ class Net(nn.Module):
     '''
     def __init__(self):
         super(Net, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels=1, out_channels=8, kernel_size=(3,3), stride=1)
+        self.conv2 = nn.Conv2d(8, 8, 3, 1)
+
+        self.dropout1 = nn.Dropout2d(0.5)
+        self.dropout2 = nn.Dropout2d(0.5)
+        
+        self.fc1 = nn.Linear(200, 64)
+        self.fc2 = nn.Linear(64, 10)
 
     def forward(self, x):
-        return x
+        x = self.conv1(x)
+        x = F.relu(x)
+        x = F.max_pool2d(x, 2)
+        x = self.dropout1(x)
+
+        x = self.conv2(x)
+        x = F.relu(x)
+        x = F.max_pool2d(x, 2)
+        x = self.dropout2(x)
+
+        x = torch.flatten(x, 1)
+        x = self.fc1(x)
+        x = F.relu(x)
+        x = self.fc2(x)
+
+        output = F.log_softmax(x, dim=1)
+        return output
 
 
 def train(args, model, device, train_loader, optimizer, epoch):
@@ -150,14 +181,20 @@ def main():
                         help='random seed (default: 1)')
     parser.add_argument('--log-interval', type=int, default=10, metavar='N',
                         help='how many batches to wait before logging training status')
+    parser.add_argument('--val-ratio', type=float, default=0.15, metavar='N',
+                        help='ratio of the training set to use for validation')
+    parser.add_argument('--data-augment', type=str, default='augment1',
+                        help='Name of the data augmentation scheme to use')
 
     parser.add_argument('--evaluate', action='store_true', default=False,
                         help='evaluate your model on the official test set')
     parser.add_argument('--load-model', type=str,
                         help='model file path')
+    
 
-    parser.add_argument('--save-model', action='store_true', default=True,
-                        help='For Saving the current Model')
+    parser.add_argument('--model-name', type=str, required=True,
+                        help='Name of the model to be saved')
+    
     args = parser.parse_args()
     use_cuda = not args.no_cuda and torch.cuda.is_available()
 
@@ -175,11 +212,8 @@ def main():
         model = fcNet().to(device)
         model.load_state_dict(torch.load(args.load_model))
 
-        test_dataset = datasets.MNIST('../data', train=False,
-                    transform=transforms.Compose([
-                        transforms.ToTensor(),
-                        transforms.Normalize((0.1307,), (0.3081,))
-                    ]))
+        test_dataset = datasets.MNIST('./mnist_data', train=False,
+                    transform=augmentation_scheme[args.data_augment])
 
         test_loader = torch.utils.data.DataLoader(
             test_dataset, batch_size=args.test_batch_size, shuffle=True, **kwargs)
@@ -189,18 +223,19 @@ def main():
         return
 
     # Pytorch has default MNIST dataloader which loads data at each iteration
-    train_dataset = datasets.MNIST('../data', train=True, download=True,
-                transform=transforms.Compose([       # Data preprocessing
-                    transforms.ToTensor(),           # Add data augmentation here
-                    transforms.Normalize((0.1307,), (0.3081,))
-                ]))
+    train_dataset = datasets.MNIST('./mnist_data', train=True, download=True,
+                transform=augmentation_scheme[args.data_augment])
 
     # You can assign indices for training/validation or use a random subset for
     # training by using SubsetRandomSampler. Right now the train and validation
     # sets are built from the same indices - this is bad! Change it so that
     # the training and validation sets are disjoint and have the correct relative sizes.
-    subset_indices_train = range(len(train_dataset))
-    subset_indices_valid = range(len(train_dataset))
+    sss = StratifiedShuffleSplit(n_splits=1, test_size=args.val_ratio)
+    subset_indices_train, subset_indices_valid = next(
+        sss.split(np.array([i for i in range(len(train_dataset))]), train_dataset.targets))
+
+    assert len(subset_indices_train) == len(train_dataset) * (1 - args.val_ratio)
+    assert len(subset_indices_valid) == len(train_dataset) * args.val_ratio
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size,
@@ -226,11 +261,13 @@ def main():
         test(model, device, val_loader)
         scheduler.step()    # learning rate scheduler
 
-        # You may optionally save your model at each epoch here
+    model_file = os.path.join(MODEL_PATH, args.model_name)
+    if not model_file.endswith('.pt'):
+        model_file += '.pt'
+    torch.save(model.state_dict(), model_file)
 
-    if args.save_model:
-        torch.save(model.state_dict(), "mnist_model.pt")
-
+    print('Data augmentation scheme')
+    print(augmentation_scheme[args.data_augment])
 
 if __name__ == '__main__':
     main()
