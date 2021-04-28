@@ -90,22 +90,28 @@ class Net(nn.Module):
     '''
     def __init__(self):
         super(Net, self).__init__()
-        self.conv1 = nn.Conv2d(in_channels=1, out_channels=8, kernel_size=(3,3), stride=1)
-        self.conv2 = nn.Conv2d(8, 8, 3, 1)
+        self.conv1 = nn.Conv2d(in_channels=1, out_channels=16, kernel_size=(3,3), stride=1)
+        self.conv2 = nn.Conv2d(16, 32, 3, 1)
+
+        self.conv1_bn = nn.BatchNorm2d(16)
+        self.conv2_bn = nn.BatchNorm2d(32)
 
         self.dropout1 = nn.Dropout2d(0.5)
         self.dropout2 = nn.Dropout2d(0.5)
-        
-        self.fc1 = nn.Linear(200, 64)
-        self.fc2 = nn.Linear(64, 10)
+
+        self.fc1 = nn.Linear(800, 256)
+        self.fc2 = nn.Linear(256, 64)
+        self.fc3 = nn.Linear(64, 10)
 
     def forward(self, x):
         x = self.conv1(x)
+        x = self.conv1_bn(x)
         x = F.relu(x)
         x = F.max_pool2d(x, 2)
         x = self.dropout1(x)
 
         x = self.conv2(x)
+        x = self.conv2_bn(x)
         x = F.relu(x)
         x = F.max_pool2d(x, 2)
         x = self.dropout2(x)
@@ -114,6 +120,8 @@ class Net(nn.Module):
         x = self.fc1(x)
         x = F.relu(x)
         x = self.fc2(x)
+        x = F.relu(x)
+        x = self.fc3(x)
 
         output = F.log_softmax(x, dim=1)
         return output
@@ -230,7 +238,7 @@ def main():
     # training by using SubsetRandomSampler. Right now the train and validation
     # sets are built from the same indices - this is bad! Change it so that
     # the training and validation sets are disjoint and have the correct relative sizes.
-    sss = StratifiedShuffleSplit(n_splits=1, test_size=args.val_ratio)
+    sss = StratifiedShuffleSplit(n_splits=1, test_size=args.val_ratio, random_state=args.seed)
     subset_indices_train, subset_indices_valid = next(
         sss.split(np.array([i for i in range(len(train_dataset))]), train_dataset.targets))
 
@@ -247,7 +255,8 @@ def main():
     )
 
     # Load your model [fcNet, ConvNet, Net]
-    model = ConvNet().to(device)
+    # model = ConvNet().to(device)
+    model = Net().to(device)
 
     # Try different optimzers here [Adam, SGD, RMSprop]
     optimizer = optim.Adadelta(model.parameters(), lr=args.lr)
@@ -266,8 +275,9 @@ def main():
         model_file += '.pt'
     torch.save(model.state_dict(), model_file)
 
-    print('Data augmentation scheme')
-    print(augmentation_scheme[args.data_augment])
+    if args.data_augment:
+        print('Data augmentation scheme')
+        print(augmentation_scheme[args.data_augment])
 
 if __name__ == '__main__':
     main()
