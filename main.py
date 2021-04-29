@@ -193,13 +193,11 @@ def main():
                         help='ratio of the training set to use for validation')
     parser.add_argument('--data-augment', type=str, default='augment1',
                         help='Name of the data augmentation scheme to use')
+    parser.add_argument('--data-ratio', type=float, default=1,
+                        help='Ratio of data used to train the model.')
 
     parser.add_argument('--evaluate', action='store_true', default=False,
                         help='evaluate your model on the official test set')
-    parser.add_argument('--load-model', type=str,
-                        help='model file path')
-    
-
     parser.add_argument('--model-name', type=str, required=True,
                         help='Name of the model to be saved')
     
@@ -214,11 +212,12 @@ def main():
 
     # Evaluate on the official test set
     if args.evaluate:
-        assert os.path.exists(args.load_model)
+        model_path = os.path.join(MODEL_PATH, args.model_name)
+        assert os.path.exists(model_path)
 
         # Set the test model
-        model = fcNet().to(device)
-        model.load_state_dict(torch.load(args.load_model))
+        model = Net().to(device)
+        model.load_state_dict(torch.load(model_path))
 
         test_dataset = datasets.MNIST('./mnist_data', train=False,
                     transform=augmentation_scheme[args.data_augment])
@@ -242,9 +241,15 @@ def main():
     subset_indices_train, subset_indices_valid = next(
         sss.split(np.array([i for i in range(len(train_dataset))]), train_dataset.targets))
 
-    assert len(subset_indices_train) == len(train_dataset) * (1 - args.val_ratio)
-    assert len(subset_indices_valid) == len(train_dataset) * args.val_ratio
+    np.random.seed(args.seed)
+    random_idx_train = np.random.permutation(len(subset_indices_train))
+    random_idx_valid = np.random.permutation(len(subset_indices_valid))
+    subset_indices_train = subset_indices_train[random_idx_train][:int(len(subset_indices_train) * args.data_ratio)]
+    subset_indices_valid = subset_indices_valid[random_idx_valid][:int(len(subset_indices_valid) * args.data_ratio)]
 
+    print(f'Number of training data points: {len(subset_indices_train)}')
+    print(f'Number of validation data points: {len(subset_indices_valid)}')
+    
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size,
         sampler=SubsetRandomSampler(subset_indices_train)
